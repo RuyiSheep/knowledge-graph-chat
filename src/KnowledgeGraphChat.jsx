@@ -9,8 +9,7 @@ const KnowledgeGraphChat = () => {
   const [sidePanel, setSidePanel] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showGraph, setShowGraph] = useState(false);
-  const [tooltipCache, setTooltipCache] = useState({});
-  const [activeTooltip, setActiveTooltip] = useState(null);
+  const tooltipCacheRef = useRef({});
   const [tooltipLoading, setTooltipLoading] = useState(false);
   const graphRef = useRef(null);
 
@@ -48,31 +47,30 @@ const KnowledgeGraphChat = () => {
     }
   };
 
-  const getQuickExplanation = async (term) => {
-    // Check cache first
-    if (tooltipCache[term]) {
-      return tooltipCache[term];
+  const getQuickExplanation = useCallback(async (term) => {
+    // Check cache first using ref
+    if (tooltipCacheRef.current[term]) {
+      return tooltipCacheRef.current[term];
     }
 
     setTooltipLoading(true);
     try {
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
+      const response = await fetch("/api/claude", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 150,
           messages: [{
             role: 'user',
             content: `Provide a brief, one-sentence explanation of: ${term}`
-          }]
+          }],
+          max_tokens: 150
         })
       });
       const data = await response.json();
       const explanation = data.content[0].text;
       
-      // Cache the result
-      setTooltipCache(prev => ({ ...prev, [term]: explanation }));
+      // Cache the result in ref
+      tooltipCacheRef.current[term] = explanation;
       setTooltipLoading(false);
       return explanation;
     } catch (error) {
@@ -80,7 +78,7 @@ const KnowledgeGraphChat = () => {
       setTooltipLoading(false);
       return "Unable to fetch explanation.";
     }
-  };
+  }, []); // No dependencies needed since we use ref
 
   const sendMessage = async (nodeId, userMessage, skipMainChildCreation = false) => {
     const currentConvo = conversations[nodeId] || [];
@@ -110,13 +108,8 @@ const KnowledgeGraphChat = () => {
       setNodes(prev => prev.map(n => 
         n.id === nodeId ? { ...n, label: userMessage.substring(0, 40) } : n
       ));
-    } 
-    // If it's a follow-up in a main thread (root or mainChild), create new mainChild
-    else if (!skipMainChildCreation && currentConvo.length >= 2 && (currentNode.type === 'root' || currentNode.type === 'main')) {
-      // Don't automatically send - the mainChild creation will handle navigation
-      const newMainChildId = await createMainChild(nodeId, userMessage);
-      // The user can continue in the new node
     }
+    // REMOVED: automatic node switching - users stay in current conversation
 
     setLoading(false);
   };
@@ -239,15 +232,9 @@ const KnowledgeGraphChat = () => {
       setShowTooltip(true);
       setTooltipContent('');
       
-      // Check cache first
-      if (tooltipCache[text]) {
-        setTooltipContent(tooltipCache[text]);
-        return;
-      }
-
       const explanation = await getQuickExplanation(text);
       setTooltipContent(explanation);
-    }, [tooltipCache, getQuickExplanation]);
+    }, [getQuickExplanation]); // Now getQuickExplanation is stable
 
     // Listen for Command/Option key while text is selected
     // This effect runs once and stays stable, preventing constant re-attachment
@@ -255,6 +242,7 @@ const KnowledgeGraphChat = () => {
       const handleKeyDown = (e) => {
         if (e.altKey || e.metaKey) {
           e.preventDefault();
+          e.stopPropagation(); // Prevent event from bubbling
           const currentSelection = window.getSelection().toString().trim();
           if (currentSelection && !showTooltipRef.current) {
             fetchTooltip(currentSelection);
@@ -265,6 +253,7 @@ const KnowledgeGraphChat = () => {
       const handleKeyUp = (e) => {
         if (!e.altKey && !e.metaKey) {
           e.preventDefault();
+          e.stopPropagation(); // Prevent event from bubbling
           if (showTooltipRef.current) {
             setShowTooltip(false);
           }
@@ -364,9 +353,14 @@ const KnowledgeGraphChat = () => {
     const [input, setInput] = useState('');
     const messagesEndRef = useRef(null);
     const conversation = conversations[nodeId] || [];
+    const prevConversationLengthRef = useRef(0);
 
     useEffect(() => {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      // Only scroll if conversation length increased (new message added)
+      if (conversation.length > prevConversationLengthRef.current) {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }
+      prevConversationLengthRef.current = conversation.length;
     }, [conversation]);
 
     const handleSend = () => {
@@ -415,19 +409,12 @@ const KnowledgeGraphChat = () => {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();   // stop form submit
-                  handleSend();
-                }
-              }}
+              onKeyPress={(e) => e.key === 'Enter' && handleSend()}
               placeholder="Type your message..."
               className="flex-1 border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={loading}
             />
-
             <button
-              type="button"            // <<< IMPORTANT
               onClick={handleSend}
               disabled={loading || !input.trim()}
               className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
