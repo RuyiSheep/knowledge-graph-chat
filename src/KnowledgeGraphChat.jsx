@@ -100,6 +100,8 @@ const KnowledgeGraphChat = () => {
       ...prev,
       [nodeId]: [...prev[nodeId], { role: 'assistant', content: response }]
     }));
+
+    const currentNode = nodes.find(n => n.id === nodeId);
     
     // If it's the first message, update the node label
     if (currentConvo.length === 0) {
@@ -107,10 +109,59 @@ const KnowledgeGraphChat = () => {
         n.id === nodeId ? { ...n, label: userMessage.substring(0, 40) } : n
       ));
     }
-    // REMOVED: automatic node switching - users stay in current conversation
+    // If it's a follow-up in a main thread (root or mainChild), create new mainChild
+    else if (!skipMainChildCreation && currentConvo.length >= 2 && (currentNode.type === 'root' || currentNode.type === 'main')) {
+      // Don't automatically send - the mainChild creation will handle navigation
+      const newMainChildId = await createMainChild(nodeId, userMessage);
+      // The user can continue in the new node
+    }
 
     setLoading(false);
   };
+
+  const createMainChild = async (parentNodeId, question) => {
+    const newNodeId = `main_${Date.now()}`;
+    const parentNode = nodes.find(n => n.id === parentNodeId);
+    
+    // Find the rightmost mainChild of this parent
+    const siblings = edges
+      .filter(e => e.from === parentNodeId && e.type === 'main')
+      .map(e => nodes.find(n => n.id === e.to));
+    
+    const rightmostX = siblings.length > 0 
+      ? Math.max(...siblings.map(s => s.x))
+      : parentNode.x;
+    
+    // Position to the right of siblings
+    const newX = rightmostX + 300;
+    const newY = parentNode.y;
+
+    const newNode = {
+      id: newNodeId,
+      label: question.substring(0, 40),
+      x: newX,
+      y: newY,
+      type: 'main'
+    };
+
+    setNodes(prev => [...prev, newNode]);
+    setEdges(prev => [...prev, { 
+      from: parentNodeId, 
+      to: newNodeId, 
+      type: 'main' 
+    }]);
+    setConversations(prev => ({ ...prev, [newNodeId]: [] }));
+    
+    // Switch to the new node and send the question there
+    setActiveNodeId(newNodeId);
+    // Use setTimeout to ensure state updates have propagated
+    setTimeout(() => {
+      sendMessage(newNodeId, question, true);
+    }, 100);
+    
+    return newNodeId;
+  };
+
 
   const createBranch = (parentNodeId, selectedText) => {
     const newNodeId = `sub_${Date.now()}`;
@@ -570,6 +621,8 @@ const KnowledgeGraphChat = () => {
         {showGraph && (
           <div className="border-b">
             <GraphVisualization />
+
+
           </div>
         )}
 
