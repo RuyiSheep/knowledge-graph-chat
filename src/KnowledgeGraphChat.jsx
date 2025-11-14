@@ -100,8 +100,6 @@ const KnowledgeGraphChat = () => {
       ...prev,
       [nodeId]: [...prev[nodeId], { role: 'assistant', content: response }]
     }));
-
-    const currentNode = nodes.find(n => n.id === nodeId);
     
     // If it's the first message, update the node label
     if (currentConvo.length === 0) {
@@ -112,49 +110,6 @@ const KnowledgeGraphChat = () => {
     // REMOVED: automatic node switching - users stay in current conversation
 
     setLoading(false);
-  };
-
-  const createMainChild = async (parentNodeId, question) => {
-    const newNodeId = `main_${Date.now()}`;
-    const parentNode = nodes.find(n => n.id === parentNodeId);
-    
-    // Find the rightmost mainChild of this parent
-    const siblings = edges
-      .filter(e => e.from === parentNodeId && e.type === 'main')
-      .map(e => nodes.find(n => n.id === e.to));
-    
-    const rightmostX = siblings.length > 0 
-      ? Math.max(...siblings.map(s => s.x))
-      : parentNode.x;
-    
-    // Position to the right of siblings
-    const newX = rightmostX + 300;
-    const newY = parentNode.y;
-
-    const newNode = {
-      id: newNodeId,
-      label: question.substring(0, 40),
-      x: newX,
-      y: newY,
-      type: 'main'
-    };
-
-    setNodes(prev => [...prev, newNode]);
-    setEdges(prev => [...prev, { 
-      from: parentNodeId, 
-      to: newNodeId, 
-      type: 'main' 
-    }]);
-    setConversations(prev => ({ ...prev, [newNodeId]: [] }));
-    
-    // Switch to the new node and send the question there
-    setActiveNodeId(newNodeId);
-    // Use setTimeout to ensure state updates have propagated
-    setTimeout(() => {
-      sendMessage(newNodeId, question, true);
-    }, 100);
-    
-    return newNodeId;
   };
 
   const createBranch = (parentNodeId, selectedText) => {
@@ -199,152 +154,25 @@ const KnowledgeGraphChat = () => {
     sendMessage(newNodeId, `What is ${selectedText}?`);
   };
 
-  const TextWithSelection = ({ text, nodeId }) => {
-    const [selection, setSelection] = useState(null);
-    const [selectionRect, setSelectionRect] = useState(null);
-    const [tooltipContent, setTooltipContent] = useState('');
-    const [showTooltip, setShowTooltip] = useState(false);
-
+  const TextWithSelection = ({ text, onSelectionChange }) => {
     const handleMouseUp = () => {
-      const selectedText = window.getSelection().toString().trim();
-      if (selectedText && selectedText.length > 0) {
-        const range = window.getSelection().getRangeAt(0);
-        const rect = range.getBoundingClientRect();
-        setSelection(selectedText);
-        setSelectionRect(rect);
-      } else {
-        setSelection(null);
-        setSelectionRect(null);
-        setShowTooltip(false);
-      }
-    };
-
-    // Use refs to track state in event handlers without causing re-renders
-    const showTooltipRef = useRef(false);
-    
-    // Update ref when state changes
-    useEffect(() => {
-      showTooltipRef.current = showTooltip;
-    }, [showTooltip]);
-
-    // Memoize fetchTooltip to prevent it from changing on every render
-    const fetchTooltip = useCallback(async (text) => {
-      setShowTooltip(true);
-      setTooltipContent('');
-      
-      const explanation = await getQuickExplanation(text);
-      setTooltipContent(explanation);
-    }, [getQuickExplanation]); // Now getQuickExplanation is stable
-
-    // Listen for Command/Option key while text is selected
-    // This effect runs once and stays stable, preventing constant re-attachment
-    useEffect(() => {
-      const handleKeyDown = (e) => {
-        if (e.altKey || e.metaKey) {
-          e.preventDefault();
-          e.stopPropagation(); // Prevent event from bubbling
-          const currentSelection = window.getSelection().toString().trim();
-          if (currentSelection && !showTooltipRef.current) {
-            fetchTooltip(currentSelection);
-          }
+      setTimeout(() => {
+        const selectedText = window.getSelection().toString().trim();
+        
+        if (selectedText && selectedText.length > 0) {
+          const range = window.getSelection().getRangeAt(0);
+          const rect = range.getBoundingClientRect();
+          onSelectionChange(selectedText, rect);
         }
-      };
-
-      const handleKeyUp = (e) => {
-        if (!e.altKey && !e.metaKey) {
-          e.preventDefault();
-          e.stopPropagation(); // Prevent event from bubbling
-          if (showTooltipRef.current) {
-            setShowTooltip(false);
-          }
-        }
-      };
-
-      window.addEventListener('keydown', handleKeyDown);
-      window.addEventListener('keyup', handleKeyUp);
-
-      return () => {
-        window.removeEventListener('keydown', handleKeyDown);
-        window.removeEventListener('keyup', handleKeyUp);
-      };
-    }, [fetchTooltip]); // fetchTooltip is now stable thanks to useCallback
-
-    const handleCreateBranch = () => {
-      if (selection) {
-        createBranch(nodeId, selection);
-        setSelection(null);
-        setSelectionRect(null);
-        setShowTooltip(false);
-        window.getSelection().removeAllRanges();
-      }
+      }, 10);
     };
 
     return (
-      <div className="relative">
-        <div 
-          onMouseUp={handleMouseUp}
-          className="whitespace-pre-wrap cursor-text select-text"
-        >
-          {text}
-        </div>
-
-        {/* Tooltip for quick explanations (shown when Command/Option is held) */}
-        {selection && showTooltip && selectionRect && (
-          <div
-            className="fixed z-50 bg-gray-900 text-white px-3 py-2 rounded-lg shadow-xl max-w-sm text-sm"
-            style={{
-              left: `${selectionRect.left + selectionRect.width / 2}px`,
-              top: `${selectionRect.top - 10}px`,
-              transform: 'translate(-50%, -100%)'
-            }}
-          >
-            {tooltipLoading || !tooltipContent ? (
-              <div className="flex items-center gap-2">
-                <Loader2 className="animate-spin" size={14} />
-                <span>Loading explanation...</span>
-              </div>
-            ) : (
-              <>
-                <div className="font-semibold mb-1 text-yellow-300">{selection}</div>
-                <div className="text-gray-300">{tooltipContent}</div>
-              </>
-            )}
-            {/* Arrow */}
-            <div
-              className="absolute left-1/2 transform -translate-x-1/2 bottom-0 translate-y-full"
-              style={{
-                width: 0,
-                height: 0,
-                borderLeft: '6px solid transparent',
-                borderRight: '6px solid transparent',
-                borderTop: '6px solid #111827'
-              }}
-            />
-          </div>
-        )}
-
-        {/* Selection popup for creating branches (shown when text is selected) */}
-        {selection && !showTooltip && (
-          <div
-            className="fixed z-40 flex flex-col gap-1"
-            style={{
-              left: `${selectionRect.left + selectionRect.width / 2}px`,
-              top: `${selectionRect.top - 10}px`,
-              transform: 'translate(-50%, -100%)'
-            }}
-          >
-            <button
-              onClick={handleCreateBranch}
-              className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm shadow-lg hover:bg-blue-700 flex items-center gap-2 whitespace-nowrap"
-            >
-              <Network size={14} />
-              Deep dive: "{selection.substring(0, 20)}{selection.length > 20 ? '...' : ''}"
-            </button>
-            <div className="text-xs text-gray-600 text-center bg-white px-2 py-1 rounded shadow">
-              Hold ⌘/⌥ for quick explanation
-            </div>
-          </div>
-        )}
+      <div 
+        onMouseUp={handleMouseUp}
+        className="whitespace-pre-wrap cursor-text select-text"
+      >
+        {text}
       </div>
     );
   };
@@ -354,6 +182,14 @@ const KnowledgeGraphChat = () => {
     const messagesEndRef = useRef(null);
     const conversation = conversations[nodeId] || [];
     const prevConversationLengthRef = useRef(0);
+    
+    // Move selection state to parent level to avoid conflicts between multiple TextWithSelection components
+    const [activeSelection, setActiveSelection] = useState(null);
+    const [selectionRect, setSelectionRect] = useState(null);
+    const [showTooltip, setShowTooltip] = useState(false);
+    const [tooltipContent, setTooltipContent] = useState('');
+    const selectionRef = useRef(null);
+    const showTooltipRef = useRef(false);
 
     useEffect(() => {
       // Only scroll if conversation length increased (new message added)
@@ -362,7 +198,74 @@ const KnowledgeGraphChat = () => {
       }
       prevConversationLengthRef.current = conversation.length;
     }, [conversation]);
+    
+    // Update tooltip ref when state changes
+    useEffect(() => {
+      showTooltipRef.current = showTooltip;
+    }, [showTooltip]);
+    
+    // Fetch tooltip explanation
+    const fetchTooltip = useCallback(async (text) => {
+      setShowTooltip(true);
+      setTooltipContent('');
+      
+      const explanation = await getQuickExplanation(text);
+      setTooltipContent(explanation);
+    }, [getQuickExplanation]);
+    
+    // Keyboard handler for Command/Option
+    useEffect(() => {
+      const handleKeyDown = (e) => {
+        if (e.altKey || e.metaKey) {
+          e.preventDefault();
+          e.stopPropagation();
+          
+          const storedSelection = selectionRef.current;
+          
+          if (storedSelection && !showTooltipRef.current) {
+            fetchTooltip(storedSelection);
+          }
+        }
+      };
 
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [fetchTooltip]);
+    
+    // Clear selection when clicking outside
+    useEffect(() => {
+      const handleClickOutside = () => {
+        if (!window.getSelection().toString().trim()) {
+          setActiveSelection(null);
+          setSelectionRect(null);
+          selectionRef.current = null;
+          setShowTooltip(false);
+        }
+      };
+
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, []);
+    
+    const handleSelectionChange = (text, rect) => {
+      setActiveSelection(text);
+      setSelectionRect(rect);
+      selectionRef.current = text;
+      setShowTooltip(false);
+      setTooltipContent('');
+    };
+    
+    const handleCreateBranch = () => {
+      if (activeSelection) {
+        createBranch(nodeId, activeSelection);
+        setActiveSelection(null);
+        setSelectionRect(null);
+        selectionRef.current = null;
+        setShowTooltip(false);
+        window.getSelection().removeAllRanges();
+      }
+    };
+    
     const handleSend = () => {
       if (input.trim() && !loading) {
         sendMessage(nodeId, input);
@@ -386,7 +289,10 @@ const KnowledgeGraphChat = () => {
                 }`}
               >
                 {msg.role === 'assistant' ? (
-                  <TextWithSelection text={msg.content} nodeId={nodeId} />
+                  <TextWithSelection 
+                    text={msg.content} 
+                    onSelectionChange={handleSelectionChange}
+                  />
                 ) : (
                   msg.content
                 )}
@@ -402,6 +308,75 @@ const KnowledgeGraphChat = () => {
           )}
           <div ref={messagesEndRef} />
         </div>
+        
+        {/* Tooltip for quick explanations */}
+        {activeSelection && showTooltip && selectionRect && (
+          <div
+            className="fixed z-50 bg-gray-900 text-white px-3 py-2 rounded-lg shadow-xl max-w-sm text-sm"
+            style={{
+              left: `${selectionRect.left + selectionRect.width / 2}px`,
+              top: `${selectionRect.top - 10}px`,
+              transform: 'translate(-50%, -100%)'
+            }}
+          >
+            <button
+              onClick={() => {
+                setShowTooltip(false);
+                setActiveSelection(null);
+                selectionRef.current = null;
+              }}
+              className="absolute top-1 right-1 text-gray-400 hover:text-white"
+              aria-label="Close"
+            >
+              <X size={14} />
+            </button>
+            
+            {tooltipLoading || !tooltipContent ? (
+              <div className="flex items-center gap-2">
+                <Loader2 className="animate-spin" size={14} />
+                <span>Loading explanation...</span>
+              </div>
+            ) : (
+              <>
+                <div className="font-semibold mb-1 text-yellow-300">{activeSelection}</div>
+                <div className="text-gray-300">{tooltipContent}</div>
+              </>
+            )}
+            <div
+              className="absolute left-1/2 transform -translate-x-1/2 bottom-0 translate-y-full"
+              style={{
+                width: 0,
+                height: 0,
+                borderLeft: '6px solid transparent',
+                borderRight: '6px solid transparent',
+                borderTop: '6px solid #111827'
+              }}
+            />
+          </div>
+        )}
+        
+        {/* Selection popup for creating branches */}
+        {activeSelection && !showTooltip && selectionRect && (
+          <div
+            className="fixed z-40 flex flex-col gap-1"
+            style={{
+              left: `${selectionRect.left + selectionRect.width / 2}px`,
+              top: `${selectionRect.top - 10}px`,
+              transform: 'translate(-50%, -100%)'
+            }}
+          >
+            <button
+              onClick={handleCreateBranch}
+              className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm shadow-lg hover:bg-blue-700 flex items-center gap-2 whitespace-nowrap"
+            >
+              <Network size={14} />
+              Deep dive: "{activeSelection.substring(0, 20)}{activeSelection.length > 20 ? '...' : ''}"
+            </button>
+            <div className="text-xs text-gray-600 text-center bg-white px-2 py-1 rounded shadow">
+              Press ⌘/⌥ for quick explanation
+            </div>
+          </div>
+        )}
 
         <div className="border-t p-4">
           <div className="flex gap-2">
@@ -409,12 +384,18 @@ const KnowledgeGraphChat = () => {
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSend();
+                }
+              }}
               placeholder="Type your message..."
               className="flex-1 border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={loading}
             />
             <button
+              type="button"
               onClick={handleSend}
               disabled={loading || !input.trim()}
               className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
@@ -491,7 +472,6 @@ const KnowledgeGraphChat = () => {
             
             let fillColor = '#e2e8f0';
             let strokeColor = '#94a3b8';
-            let shape = 'circle';
             
             if (isActive) {
               fillColor = isRoot ? '#fbbf24' : isMain ? '#3b82f6' : '#a855f7';
@@ -578,7 +558,7 @@ const KnowledgeGraphChat = () => {
           </div>
           <div className="mt-2 text-sm text-gray-300">
             <div className="flex items-center gap-4 mb-1">
-              <span>💡 <strong>Highlight</strong> + hold <kbd className="bg-gray-700 px-2 py-0.5 rounded text-xs font-mono">⌘/⌥</kbd> for quick explanations</span>
+              <span>💡 <strong>Highlight</strong> + press <kbd className="bg-gray-700 px-2 py-0.5 rounded text-xs font-mono">⌘/⌥</kbd> for quick explanations</span>
               <span>🔗 <strong>Highlight</strong> + click button for deep-dive branches</span>
             </div>
             <div className="text-xs text-gray-400">
